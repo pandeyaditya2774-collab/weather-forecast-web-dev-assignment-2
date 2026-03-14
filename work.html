@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Async Weather Tracker - Assignment 2</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            max-width: 600px; 
+            margin: 50px auto; 
+            padding: 20px; 
+            background: linear-gradient(to bottom, #87CEEB, #98FB98); 
+        }
+        h1 { text-align: center; color: #333; }
+        input { 
+            width: 70%; padding: 12px; font-size: 16px; border: 2px solid #ddd; border-radius: 5px; 
+        }
+        button { 
+            padding: 12px 20px; font-size: 16px; background: #4CAF50; color: white; border: none; 
+            border-radius: 5px; cursor: pointer; 
+        }
+        button:hover { background: #45a049; }
+        #history { margin: 20px 0; }
+        .history-item { 
+            cursor: pointer; padding: 10px; margin: 5px 0; background: rgba(255,255,255,0.8); 
+            border: 1px solid #ccc; border-radius: 5px; transition: background 0.3s; 
+        }
+        .history-item:hover { background: #fff; }
+        #weather-info, #error-msg { 
+            margin: 20px 0; padding: 20px; border-radius: 10px; font-size: 18px; 
+            min-height: 60px; 
+        }
+        #weather-info { background: rgba(255,255,255,0.9); border-left: 5px solid #4CAF50; }
+        #error-msg { background: rgba(244,67,54,0.2); border-left: 5px solid #f44336; color: #d32f2f; }
+    </style>
+</head>
+<body>
+    <h1>🌤️ Async Weather Tracker</h1>
+    <div style="text-align: center;">
+        <input type="text" id="city-input" placeholder="Enter city name (e.g., Mumbai, London)" />
+        <button id="search-btn">Search Weather</button>
+    </div>
+    <div id="history"><h3>Recent Searches:</h3></div>
+    <div id="weather-info"></div>
+    <div id="error-msg"></div>
+
+    <script>
+        console.log('1. Script start - synchronous code executes first (call stack fills).');
+
+        const cityInput = document.getElementById('city-input');
+        const searchBtn = document.getElementById('search-btn');
+        const historyDiv = document.getElementById('history');
+        const weatherDiv = document.getElementById('weather-info');
+        const errorDiv = document.getElementById('error-msg');
+
+        console.log('2. DOM elements grabbed - sync. Loading LocalStorage history.');
+        loadHistory();
+
+        searchBtn.addEventListener('click', handleSearch);
+        cityInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleSearch(); });
+
+        async function handleSearch() {
+            const city = cityInput.value.trim();
+            if (!city) return showError('Enter a city name!');
+
+            console.log(`3. handleSearch sync start - before async for "${city}".`);
+
+            try {
+                console.log('4. async fetchWeather() called - moves to macrotask queue (non-blocking).');
+                const weather = await fetchWeather(city);
+                console.log('✅ 7. Await done - data back on call stack, displayWeather runs.');
+                displayWeather(weather, city);
+                saveToHistory(city);
+                loadHistory();
+                clearError();
+            } catch (error) {
+                console.error('❌ 8. Error caught - try/catch handles promise rejection.');
+                showError(error.message);
+            }
+
+            console.log('🔄 5. This prints BEFORE weather data! (Proves event loop / non-blocking async)');
+        }
+
+        async function fetchWeather(city) {
+            console.log('6a. Geocoding async - promise 1 (geocoding-api.open-meteo.com)');
+            const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
+            const geo = await geoRes.json();
+
+            if (!geo.results?.[0]) throw new Error('City not found - try another name');
+
+            const { latitude: lat, longitude: lon } = geo.results[0];
+            console.log(`6b. Geo done (${lat.toFixed(2)}, ${lon.toFixed(2)}). Promise 2: weather fetch`);
+
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&temperature_unit=celsius&timezone=auto`;
+            return fetch(url)
+                .then(res => {
+                    console.log('.then 1: Fetch response ok');
+                    if (!res.ok) throw new Error('Network error');
+                    return res.json();
+                })
+                .then(data => {
+                    console.log('.then 2: Data parsed');
+                    const w = data.current_weather;
+                    return {
+                        temp: Math.round(w.temperature),
+                        condition: getCondition(w.weathercode),
+                        description: 'Live conditions'
+                    };
+                })
+                .catch(err => {
+                    console.log('.catch: Promise rejected');
+                    throw new Error(`Weather fetch failed: ${err.message}`);
+                });
+        }
+
+        function getCondition(code) {
+            const map = {0:'Clear ☀️',1:'Mostly Clear ☀️',2:'Partly Cloudy ⛅',3:'Cloudy ☁️',45:'Foggy 🌫️',61:'Rainy 🌧️',71:'Snowy ❄️',95:'Storm ⚡'};
+            return map[code] || 'Unknown 🌤️';
+        }
+
+        function displayWeather(data, city) {
+            weatherDiv.innerHTML = `
+                <h2>${city.toUpperCase()}</h2>
+                <p><strong>${data.temp}°C</strong> - ${data.condition}</p>
+                <p>${data.description}</p>
+            `;
+        }
+
+        function showError(msg) {
+            errorDiv.textContent = msg;
+            weatherDiv.innerHTML = '';
+        }
+
+        function clearError() {
+            errorDiv.textContent = '';
+        }
+
+        function saveToHistory(city) {
+            let hist = JSON.parse(localStorage.getItem('weatherHistory') || '[]');
+            hist = [city, ...hist.filter(h => h.toLowerCase() !== city.toLowerCase())].slice(0, 5);
+            localStorage.setItem('weatherHistory', JSON.stringify(hist));
+        }
+
+        function loadHistory() {
+            const hist = JSON.parse(localStorage.getItem('weatherHistory') || '[]');
+            const recent = hist.length ? `<h3>Recent (${hist.length}):</h3>${hist.map(c => `<div class="history-item" onclick="cityInput.value='${c.replace(/'/g,'\\\'')}';handleSearch();">${c}</div>`).join('')}` : '<h3>No recent searches</h3>';
+            historyDiv.innerHTML = recent;
+        }
+
+        console.log('9. Setup complete - event loop ready for clicks. Open console to analyze!');
+    </script>
+</body>
+</html>
